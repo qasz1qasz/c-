@@ -1,8 +1,9 @@
 /*
- * feature_write.c - 复选框功能本体（C 语言）
+ * feature_write.c - 两个修改功能本体（C 语言）：动态修改 + 静态修改
  *
- * 这是用户提供的 GameGuardian Lua 脚本（S_Pointer + gg.addListItems）
- * 逐行翻成的 C，勾选复选框后由主程序每秒调一次，相当于 Lua 里的 freeze=true。
+ * 【动态修改】用户提供的 GameGuardian Lua 脚本（S_Pointer + gg.addListItems）
+ * 逐行翻成的 C，开关开启后由主程序每秒调一次，相当于 Lua 里的 freeze=true；
+ * 写入值不再写死 110，改由界面输入框传入。
  *
  * Lua -> C 对照：
  *   gg.getRangesList + state "Cb" + 名字 "libUE4.so:bss"
@@ -13,9 +14,16 @@
  *     -> 首地址 = bss + 0x56CFF0，之后每级按 64 位读指针再加下一偏移，
  *        共读 5 次，最终地址 = 最后指针 + 0x39C
  *   gg.addListItems({flags = 16, value = 110, freeze = true})
- *     -> flags 16 是 GG 的 TYPE_FLOAT：把 110 按 float 写入（不是整数），
+ *     -> flags 16 是 GG 的 TYPE_FLOAT：把数值按 float 写入（不是整数），
  *        freeze 对应这里的每秒重复写入
  *   Lua 里那句 print 是作者水印（"缤:" + 一个常数），无功能，未翻译。
+ *
+ * 【静态修改】用户提供的另一段 GG 写法（静态广角）翻成的 C：
+ *   so = gg.getRangesList('libUE4.so')[1].start
+ *     -> maps 里 libUE4.so 第一段映射的起始地址，也就是装载基址
+ *   py = 0x37C03B8; setvalue(so + py, 16, 2)
+ *     -> 地址 = 基址 + 0x37C03B8，flags 16 = float，写界面输入框的数值
+ *        （默认 2）；原写法没有 freeze，点一次按钮写一次。
  *
  * 目标包名 com.rekoo.pubgm 沿用之前终端版的设定
  * （Lua 在 GG 里是手动选进程的，没有写包名）。
@@ -38,7 +46,7 @@
 
 #define TARGET_PACKAGE "com.rekoo.pubgm"
 #define TARGET_MODULE  "libUE4.so"
-#define WRITE_VALUE    110.0f   /* Lua: value = 110, flags = 16 (float) */
+#define STATIC_OFFSET  0x37C03B8 /* 静态修改偏移：GG 里的 py */
 
 static const uintptr_t OFFSETS[] = {
     0x56CFF0, 0x30, 0x4B8, 0x360, 0x170, 0x39C
@@ -142,6 +150,46 @@ static uintptr_t FindModuleBssBase(pid_t pid, const char *moduleName)
     return base;
 }
 
+/*
+ * 在 maps 里找 moduleName 的装载基址：
+ * GG 的 gg.getRangesList('libUE4.so')[1].start —— 范围列表按地址排序，
+ * 第一段就是该模块在 maps 里第一次出现的那段映射的起始地址。
+ * 找不到返回 0。同样拆出来方便拿样本 maps 单测。
+ */
+static uintptr_t FindModuleBaseFromMaps(FILE *fp, const char *moduleName)
+{
+    char line[1024];
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        uintptr_t start = (uintptr_t)strtoull(line, NULL, 16);
+
+        char path[512] = {0};
+        int n = sscanf(line, "%*s %*s %*s %*s %*s %511[^\n]", path);
+        if (n != 1 || path[0] == '\0') continue;
+
+        char *deleted = strstr(path, " (deleted)");
+        if (deleted) *deleted = '\0';
+
+        const char *slash = strrchr(path, '/');
+        const char *base = slash ? slash + 1 : path;
+        if (strcmp(base, moduleName) == 0) return start;   /* 第一段就是基址 */
+    }
+    return 0;
+}
+
+static uintptr_t FindModuleBase(pid_t pid, const char *moduleName)
+{
+    char mapsPath[256];
+    snprintf(mapsPath, sizeof(mapsPath), "/proc/%d/maps", (int)pid);
+
+    FILE *fp = fopen(mapsPath, "r");
+    if (!fp) return 0;
+
+    uintptr_t base = FindModuleBaseFromMaps(fp, moduleName);
+    fclose(fp);
+    return base;
+}
+
 static int ReadProcessMemory(pid_t pid, uintptr_t address, void *buffer, size_t size)
 {
     char memPath[256];
@@ -201,7 +249,7 @@ static uintptr_t ResolvePointerChain(pid_t pid, uintptr_t bssBase,
     return 0;
 }
 
-int Feature_ApplyWrite(char *message, size_t messageSize)
+int Feature_ApplyWrite(float value, char *message, size_t messageSize)
 {
     if (geteuid() != 0) {
         snprintf(message, messageSize, "失败：不是 root 运行，读不了游戏内存，请用 su 后再启动");
@@ -238,7 +286,7 @@ int Feature_ApplyWrite(char *message, size_t messageSize)
         return 1;
     }
 
-    float newValue = WRITE_VALUE;
+    float newValue = value;
     if (WriteProcessMemory(pid, finalAddr, &newValue, sizeof(newValue)) != 0) {
         snprintf(message, messageSize, "失败：写入失败（%s）", strerror(errno));
         return 1;
@@ -246,11 +294,60 @@ int Feature_ApplyWrite(char *message, size_t messageSize)
 
     float checkValue = 0.0f;
     if (ReadProcessMemory(pid, finalAddr, &checkValue, sizeof(checkValue)) == 0
-            && checkValue != WRITE_VALUE) {
-        snprintf(message, messageSize, "失败：写入后读回 %g，与 110 不一致", (double)checkValue);
+            && checkValue != value) {
+        snprintf(message, messageSize, "失败：写入后读回 %g，与 %g 不一致",
+                 (double)checkValue, (double)value);
         return 1;
     }
 
-    snprintf(message, messageSize, "成功：已写入 110.0（float，原值 %g）", (double)oldValue);
+    snprintf(message, messageSize, "成功：已写入 %g（float，原值 %g）",
+             (double)value, (double)oldValue);
+    return 0;
+}
+
+/* 静态修改：地址 = libUE4.so 基址 + STATIC_OFFSET，写 float，点一次写一次 */
+int Feature_ApplyStaticWrite(float value, char *message, size_t messageSize)
+{
+    if (geteuid() != 0) {
+        snprintf(message, messageSize, "失败：不是 root 运行，读不了游戏内存，请用 su 后再启动");
+        return 1;
+    }
+
+    pid_t pid = FindProcessByPackage(TARGET_PACKAGE);
+    if (pid <= 0) {
+        snprintf(message, messageSize, "失败：未找到游戏进程，请先打开游戏");
+        return 1;
+    }
+
+    uintptr_t moduleBase = FindModuleBase(pid, TARGET_MODULE);
+    if (moduleBase == 0) {
+        snprintf(message, messageSize, "失败：未找到 %s 的映射", TARGET_MODULE);
+        return 1;
+    }
+
+    uintptr_t finalAddr = moduleBase + STATIC_OFFSET;
+
+    float oldValue = 0.0f;
+    if (ReadProcessMemory(pid, finalAddr, &oldValue, sizeof(oldValue)) != 0) {
+        snprintf(message, messageSize, "失败：读取当前值失败（%s）", strerror(errno));
+        return 1;
+    }
+
+    float newValue = value;
+    if (WriteProcessMemory(pid, finalAddr, &newValue, sizeof(newValue)) != 0) {
+        snprintf(message, messageSize, "失败：写入失败（%s）", strerror(errno));
+        return 1;
+    }
+
+    float checkValue = 0.0f;
+    if (ReadProcessMemory(pid, finalAddr, &checkValue, sizeof(checkValue)) == 0
+            && checkValue != value) {
+        snprintf(message, messageSize, "失败：写入后读回 %g，与 %g 不一致",
+                 (double)checkValue, (double)value);
+        return 1;
+    }
+
+    snprintf(message, messageSize, "成功：静态地址已写入 %g（float，原值 %g）",
+             (double)value, (double)oldValue);
     return 0;
 }

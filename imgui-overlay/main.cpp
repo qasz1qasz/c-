@@ -16,7 +16,9 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <csignal>
 #include <mutex>
@@ -43,9 +45,14 @@ static volatile std::sig_atomic_t g_running = 1;
 
 static void OnSignal(int) { g_running = 0; }
 
-/* 复选框被点动时由界面回调：开启 -> 启动/继续写入；关闭 -> 停 */
+/* 动态开关被点动时由界面回调：开启 -> 启动/继续写入；关闭 -> 停 */
 static std::mutex g_featureMutex;
 static bool g_featureEnabled = false;
+static float g_dynamicValue = 110.0f;   /* 动态区当前数值（输入框确定后更新） */
+
+/* 静态区执行结果（只有主线程读写，仍用锁和动态那边保持一致写法） */
+static std::mutex g_staticMutex;
+static std::string g_staticResult;
 
 extern "C" void OnFeatureToggled(int enabled)
 {
@@ -57,24 +64,75 @@ extern "C" void OnFeatureToggled(int enabled)
     }
 }
 
+/* 把输入框文本解析成 float；有杂字符、空串都算无效 */
+static bool ParseFloatValue(const char *text, float *out)
+{
+    if (text == nullptr || *text == '\0') return false;
+    char *end = nullptr;
+    float value = std::strtof(text, &end);
+    if (end == text) return false;
+    while (*end != '\0' && std::isspace((unsigned char)*end)) end++;
+    if (*end != '\0') return false;
+    *out = value;
+    return true;
+}
+
+/* 动态区「确定修改」：定下新数值并立即写一次；
+ * 开关开着时，后台线程之后每秒也按这个新数值重写 */
+extern "C" void OnDynamicConfirm(const char *text)
+{
+    float value;
+    if (!ParseFloatValue(text, &value)) {
+        std::lock_guard<std::mutex> lock(g_statusMutex);
+        g_lastResult = "失败：动态数值无效，点输入框用键盘输入数字";
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_featureMutex);
+        g_dynamicValue = value;
+    }
+    char message[128];
+    Feature_ApplyWrite(value, message, sizeof(message));
+    std::lock_guard<std::mutex> lock(g_statusMutex);
+    g_lastResult = message;
+}
+
+/* 静态区「确定修改」：按静态地址（libUE4.so 基址 + 0x37C03B8）立即写一次 */
+extern "C" void OnStaticConfirm(const char *text)
+{
+    float value;
+    if (!ParseFloatValue(text, &value)) {
+        std::lock_guard<std::mutex> lock(g_staticMutex);
+        g_staticResult = "失败：静态数值无效，点输入框用键盘输入数字";
+        return;
+    }
+    char message[128];
+    Feature_ApplyStaticWrite(value, message, sizeof(message));
+    std::lock_guard<std::mutex> lock(g_staticMutex);
+    g_staticResult = message;
+}
+
 /* 窗体里点「退出程序」按钮或标题栏 X：停主循环，后面统一走清理退出 */
 extern "C" void OnExitRequested()
 {
     g_running = 0;
 }
 
-/* 后台线程：功能开启期间每秒执行一次写入，把结果存下来给界面显示 */
+/* 后台线程：动态开关开启期间每秒按当前动态数值执行一次写入，
+ * 把结果存下来给界面显示（静态修改不在这里，点按钮才写） */
 static void FeatureWorker()
 {
     while (g_running) {
         bool enabled;
+        float value;
         {
             std::lock_guard<std::mutex> lock(g_featureMutex);
             enabled = g_featureEnabled;
+            value = g_dynamicValue;
         }
         if (enabled) {
             char message[128];
-            Feature_ApplyWrite(message, sizeof(message));
+            Feature_ApplyWrite(value, message, sizeof(message));
             std::lock_guard<std::mutex> lock(g_statusMutex);
             g_lastResult = message;
         }
@@ -174,6 +232,10 @@ int main()
         printf("警告：音量键监听没起来，窗体只能一直显示（原因见上面一行）。\n");
     }
 
+    /* 输入框默认值：动态 110（原 Lua 的值）、静态 2（静态广角的值） */
+    std::snprintf(g_menu.dynamic_input, sizeof(g_menu.dynamic_input), "110");
+    std::snprintf(g_menu.static_input, sizeof(g_menu.static_input), "2");
+
     std::thread worker(FeatureWorker);
 
     /* 6. 主循环 */
@@ -191,9 +253,19 @@ int main()
         graphics->NewFrame();
 
         if (g_windowVisible) {
-            std::lock_guard<std::mutex> lock(g_statusMutex);
-            std::snprintf(g_menu.status_text, sizeof(g_menu.status_text),
-                          "%s", g_lastResult.c_str());
+            /* 先把结果拷进界面状态再画：画的过程中按钮回调要写这些结果，
+             * 不能画着还攥着锁（回调里再抢同一把锁会死锁） */
+            {
+                std::lock_guard<std::mutex> lock(g_statusMutex);
+                std::snprintf(g_menu.status_text, sizeof(g_menu.status_text),
+                              "%s", g_lastResult.c_str());
+            }
+            {
+                std::lock_guard<std::mutex> lock(g_staticMutex);
+                std::snprintf(g_menu.static_status_text,
+                              sizeof(g_menu.static_status_text),
+                              "%s", g_staticResult.c_str());
+            }
             TouchInput::GetDebugText(g_menu.debug_text, sizeof(g_menu.debug_text));
             Menu_Draw(&g_menu);
         }

@@ -4,9 +4,13 @@
  * 样式要点：
  *   - 深色半透明窗体，圆角 8
  *   - 主色紫 #6C4DFF（开关打开色、标题栏激活色都用它）
- *   - 窗口里只有一个功能：滑动开关「数值修改（写入 110.0）」（ImGui 没有现成
- *     的开关控件，用 InvisibleButton + DrawList 自绘，滑块带滑动动画）
- *   - 开关下面一行状态文字：已开启（紫）/ 已关闭（灰）
+ *   - 窗口分两个区域：上面「动态修改（指针链）」、下面「静态修改（静态广角）」
+ *   - 每个区域各有一个输入框和一个「确定修改」按钮：用户在输入框里填数值，
+ *     点确定才真正写入（动态区填的值同时是开关冻结重写用的值）
+ *   - 输入框点开的是窗内自带的数字键盘：本程序没有安卓窗口输入通道，
+ *     系统输入法唤不起来，所以用自带键盘点按输入（数字、小数点、负号、删除）
+ *   - 动态区的滑动开关是自绘的（ImGui 没有现成开关控件，
+ *     用 InvisibleButton + DrawList 画，滑块带滑动动画）
  *
  * 注意：界面里有中文，真正跑之前主程序要给 ImGui 加载中文字体
  * （系统字体 + 中文字形范围），否则中文会显示成方框。这一步在主程序里做。
@@ -16,6 +20,8 @@
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS /* cimgui 要求：定义这个宏才会给出结构体和枚举定义 */
 #include "cimgui.h"
 #include <stddef.h> /* NULL */
+#include <stdio.h>  /* snprintf */
+#include <string.h> /* strlen / memmove */
 
 void MenuStyle_Apply(void)
 {
@@ -24,7 +30,7 @@ void MenuStyle_Apply(void)
 
     /* 形状 */
     style->WindowRounding    = 8.0f;  /* 窗口圆角 */
-    style->FrameRounding     = 4.0f;  /* 复选框圆角 */
+    style->FrameRounding     = 4.0f;  /* 输入框/按钮圆角 */
     style->GrabRounding      = 4.0f;
     style->WindowBorderSize  = 1.0f;
     style->FrameBorderSize   = 0.0f;
@@ -40,10 +46,13 @@ void MenuStyle_Apply(void)
     colors[ImGuiCol_TitleBgActive]= (ImVec4_c){ 0.16f, 0.12f, 0.35f, 1.00f }; /* 标题栏激活：深紫 */
     colors[ImGuiCol_Text]         = (ImVec4_c){ 0.92f, 0.92f, 0.95f, 1.00f }; /* 主文字 */
     colors[ImGuiCol_TextDisabled] = (ImVec4_c){ 0.48f, 0.48f, 0.55f, 1.00f }; /* 次要文字 */
-    colors[ImGuiCol_FrameBg]        = (ImVec4_c){ 0.14f, 0.14f, 0.18f, 1.00f }; /* 复选框底 */
+    colors[ImGuiCol_FrameBg]        = (ImVec4_c){ 0.14f, 0.14f, 0.18f, 1.00f }; /* 输入框底 */
     colors[ImGuiCol_FrameBgHovered] = (ImVec4_c){ 0.19f, 0.19f, 0.24f, 1.00f };
     colors[ImGuiCol_FrameBgActive]  = (ImVec4_c){ 0.23f, 0.20f, 0.45f, 1.00f };
     colors[ImGuiCol_CheckMark]    = (ImVec4_c){ 0.42f, 0.30f, 1.00f, 1.00f }; /* 对勾：主色紫 #6C4DFF */
+    colors[ImGuiCol_Button]         = (ImVec4_c){ 0.20f, 0.20f, 0.26f, 1.00f }; /* 按钮底 */
+    colors[ImGuiCol_ButtonHovered]  = (ImVec4_c){ 0.28f, 0.26f, 0.48f, 1.00f };
+    colors[ImGuiCol_ButtonActive]   = (ImVec4_c){ 0.42f, 0.30f, 1.00f, 1.00f };
     colors[ImGuiCol_Separator]    = (ImVec4_c){ 0.25f, 0.25f, 0.32f, 1.00f };
 }
 
@@ -102,8 +111,138 @@ static bool DrawFeatureSwitch(MenuState *state)
                                radius - 3.0f, knobColor, 32);
 
     igSameLine(0.0f, 10.0f);
-    igTextUnformatted("数值修改（写入 110.0）", NULL);
+    igTextUnformatted("持续写入（冻结）", NULL);
     return changed;
+}
+
+/* ---- 输入框 + 数字键盘 ----
+ * 输入框只读显示（ReadOnly）：内容只能由下面的数字键盘改，
+ * 点一下输入框就把键盘切到它身上（focused_input 记下是哪个）。 */
+
+static void InputAppendChar(char *buf, size_t bufSize, char ch)
+{
+    size_t len = strlen(buf);
+    if (len + 1 >= bufSize) return;
+    if (ch == '.' ) {
+        /* 小数点只许有一个；空或只有负号时自动补 0，变成 0. / -0. */
+        size_t i;
+        for (i = 0; i < len; i++) {
+            if (buf[i] == '.') return;
+        }
+        if (len == 0 || (len == 1 && buf[0] == '-')) {
+            InputAppendChar(buf, bufSize, '0');
+            len = strlen(buf);
+            if (len + 1 >= bufSize) return;
+        }
+    }
+    buf[len] = ch;
+    buf[len + 1] = '\0';
+}
+
+static void InputBackspace(char *buf)
+{
+    size_t len = strlen(buf);
+    if (len > 0) buf[len - 1] = '\0';
+}
+
+static void InputToggleMinus(char *buf, size_t bufSize)
+{
+    size_t len = strlen(buf);
+    if (len > 0 && buf[0] == '-') {
+        memmove(buf, buf + 1, len); /* 连结尾 '\0' 一起搬 */
+    } else if (len + 1 < bufSize) {
+        memmove(buf + 1, buf, len + 1);
+        buf[0] = '-';
+    }
+}
+
+/* 画一行「数值：[输入框]」，点中输入框返回它对应的编号 */
+static void DrawValueInput(MenuState *state, const char *id, char *buf,
+                           size_t bufSize, int inputIndex)
+{
+    igTextUnformatted("数值", NULL);
+    igSameLine(0.0f, 8.0f);
+
+    bool active = (state->focused_input == inputIndex);
+    if (active) {
+        /* 正在编辑的输入框底色染紫，提醒键盘在改哪个 */
+        igPushStyleColor_Vec4(ImGuiCol_FrameBg,
+                              (ImVec4_c){ 0.23f, 0.20f, 0.45f, 1.00f });
+    }
+    igSetNextItemWidth(igGetContentRegionAvail().x);
+    igInputText(id, buf, bufSize,
+                ImGuiInputTextFlags_ReadOnly, NULL, NULL);
+    if (active) igPopStyleColor(1);
+    if (igIsItemClicked(0)) {
+        state->focused_input = inputIndex;
+    }
+}
+
+/* 数字键盘：3 列网格，编辑 focused_input 指向的输入框 */
+static void DrawNumericKeyboard(MenuState *state)
+{
+    char *buf = NULL;
+    size_t bufSize = 0;
+    if (state->focused_input == 1) {
+        buf = state->dynamic_input;
+        bufSize = sizeof(state->dynamic_input);
+    } else if (state->focused_input == 2) {
+        buf = state->static_input;
+        bufSize = sizeof(state->static_input);
+    } else {
+        return;
+    }
+
+    igSeparator();
+    igTextDisabled(state->focused_input == 1 ? "键盘：动态数值" : "键盘：静态数值");
+
+    float avail = igGetContentRegionAvail().x;
+    float keyW = (avail - 16.0f) / 3.0f; /* 3 列，两处行内间距共 16 */
+    ImVec2_c keySize = { keyW, 42.0f };
+
+    static const char *digits[3][3] = {
+        { "7", "8", "9" },
+        { "4", "5", "6" },
+        { "1", "2", "3" },
+    };
+    int row, col;
+    for (row = 0; row < 3; row++) {
+        for (col = 0; col < 3; col++) {
+            char label[24];
+            snprintf(label, sizeof(label), "%s##k%s",
+                     digits[row][col], digits[row][col]);
+            if (col > 0) igSameLine(0.0f, 8.0f);
+            if (igButton(label, keySize)) {
+                InputAppendChar(buf, bufSize, digits[row][col][0]);
+            }
+        }
+    }
+
+    /* 第四行：小数点 / 0 / 删除 */
+    if (igButton(".##kdot", keySize)) {
+        InputAppendChar(buf, bufSize, '.');
+    }
+    igSameLine(0.0f, 8.0f);
+    if (igButton("0##k0", keySize)) {
+        InputAppendChar(buf, bufSize, '0');
+    }
+    igSameLine(0.0f, 8.0f);
+    if (igButton("删除##kdel", keySize)) {
+        InputBackspace(buf);
+    }
+
+    /* 第五行：清空 / 正负号 / 完成（收起键盘） */
+    if (igButton("清空##kclr", keySize)) {
+        buf[0] = '\0';
+    }
+    igSameLine(0.0f, 8.0f);
+    if (igButton("+/-##kneg", keySize)) {
+        InputToggleMinus(buf, bufSize);
+    }
+    igSameLine(0.0f, 8.0f);
+    if (igButton("完成##kdone", keySize)) {
+        state->focused_input = 0;
+    }
 }
 
 void Menu_Draw(MenuState *state)
@@ -119,15 +258,21 @@ void Menu_Draw(MenuState *state)
     bool visible = igBegin("Game Modifier", &window_open, flags);
     if (visible) {
 
-        igTextColored((ImVec4_c){ 0.62f, 0.62f, 0.68f, 1.00f }, "功能");
+        /* ===== 区域一：动态修改（指针链） ===== */
+        igTextColored((ImVec4_c){ 0.62f, 0.62f, 0.68f, 1.00f }, "动态修改");
         igSeparator();
 
-        /* 唯一的功能：一个滑动开关。点动时通知主程序。 */
+        /* 动态开关：开启后每秒按下面输入框的数值持续写入（冻结） */
         if (DrawFeatureSwitch(state)) {
             OnFeatureToggled(state->feature_on ? 1 : 0);
         }
 
-        igSpacing();
+        DrawValueInput(state, "##dynamic_input", state->dynamic_input,
+                       sizeof(state->dynamic_input), 1);
+
+        if (igButton("确定修改##dynamic", (ImVec2_c){ -1.0f, 0.0f })) {
+            OnDynamicConfirm(state->dynamic_input);
+        }
 
         /* 状态行 */
         if (state->feature_on) {
@@ -136,10 +281,34 @@ void Menu_Draw(MenuState *state)
             igTextColored((ImVec4_c){ 0.48f, 0.48f, 0.55f, 1.00f }, "状态：已关闭");
         }
 
-        /* 主程序给的执行结果（成功/失败原因），有内容才显示 */
+        /* 主程序给的动态执行结果（成功/失败原因），有内容才显示 */
         if (state->status_text[0] != '\0') {
-            igSpacing();
             igTextWrapped("%s", state->status_text);
+        }
+
+        igSpacing();
+
+        /* ===== 区域二：静态修改（静态广角） ===== */
+        igTextColored((ImVec4_c){ 0.62f, 0.62f, 0.68f, 1.00f }, "静态修改");
+        igSeparator();
+        igTextDisabled("libUE4.so 基址 + 0x37C03B8");
+
+        DrawValueInput(state, "##static_input", state->static_input,
+                       sizeof(state->static_input), 2);
+
+        if (igButton("确定修改##static", (ImVec2_c){ -1.0f, 0.0f })) {
+            OnStaticConfirm(state->static_input);
+        }
+
+        /* 主程序给的静态执行结果，有内容才显示 */
+        if (state->static_status_text[0] != '\0') {
+            igTextWrapped("%s", state->static_status_text);
+        }
+
+        /* ===== 数字键盘（点了哪个输入框就编辑哪个） ===== */
+        if (state->focused_input != 0) {
+            igSpacing();
+            DrawNumericKeyboard(state);
         }
 
         igSpacing();
