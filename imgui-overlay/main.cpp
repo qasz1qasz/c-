@@ -24,6 +24,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 
 #include "ANativeWindowCreator.h"
@@ -154,29 +155,65 @@ int main()
 
     /* 0. 系统接口自检：平台层靠运行时解析 libgui 的私有符号建窗，
      * 某个符号在本机系统上不存在时指针就是空的，旧版直接调用会段错误、什么都看不到。
-     * 这里先逐个验一遍，缺了就把名字打印出来再退出，方便对着系统版本适配。 */
+     * 这里先逐个验一遍，缺了就把名字打印出来再退出，方便对着系统版本适配。
+     *
+     * 注意只能验「本版本真的会走到的」接口，不能全验：每个安卓版本用的接口不一样
+     * （对照 AndroidImgui 的 ANativeWindowCreator 调用路径）——
+     *   全部版本都用：RefBase、String8、SurfaceComposerClient 构造、createSurface、
+     *                 SurfaceControl 三件套
+     *   8/9 才用：getBuiltInDisplay；10 及以下取屏幕信息用 getDisplayInfo
+     *   10 起才有：LayerMetadata（10/11 还要用它的 setInt32）
+     *   10~13 用：getInternalDisplayToken；11 起取屏幕信息改用 getDisplayState
+     *   12 起才用：Transaction 构造 / setTrustedOverlay / apply
+     *   14 起才用：getPhysicalDisplayIds / getPhysicalDisplayToken
+     * 高版本才有的接口在低版本系统上本来就不存在，全验会把安卓 8~11 误判成缺失、
+     * 还没建窗就退出——所以下面按 systemVersion 分组验。已适配范围：安卓 8~16。 */
     {
         const auto &funcs = android::detail::Functionals::GetInstance();
-        printf("系统版本：Android %zu\n", funcs.systemVersion);
+        const size_t ver = funcs.systemVersion;
+        printf("系统版本：Android %zu\n", ver);
         struct SymbolCheck { const char *name; const void *ptr; };
-        const SymbolCheck checks[] = {
+        std::vector<SymbolCheck> checks = {
             {"RefBase::incStrong",     reinterpret_cast<const void *>(funcs.RefBase__IncStrong)},
             {"RefBase::decStrong",     reinterpret_cast<const void *>(funcs.RefBase__DecStrong)},
             {"String8 构造函数",        reinterpret_cast<const void *>(funcs.String8__Constructor)},
             {"String8 析构函数",        reinterpret_cast<const void *>(funcs.String8__Destructor)},
-            {"LayerMetadata 构造函数",  reinterpret_cast<const void *>(funcs.LayerMetadata__Constructor)},
             {"SurfaceComposerClient 构造函数", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Constructor)},
             {"SurfaceComposerClient::createSurface", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__CreateSurface)},
-            {"getPhysicalDisplayIds",  reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetPhysicalDisplayIds)},
-            {"getPhysicalDisplayToken", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetPhysicalDisplayToken)},
-            {"getDisplayState",        reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetDisplayState)},
-            {"Transaction 构造函数",    reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__Constructor)},
-            {"Transaction::setTrustedOverlay", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__SetTrustedOverlay)},
-            {"Transaction::apply",     reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__Apply)},
             {"SurfaceControl::validate", reinterpret_cast<const void *>(funcs.SurfaceControl__Validate)},
             {"SurfaceControl::getSurface", reinterpret_cast<const void *>(funcs.SurfaceControl__GetSurface)},
             {"SurfaceControl::disconnect", reinterpret_cast<const void *>(funcs.SurfaceControl__DisConnect)},
         };
+        auto addCheck = [&checks](const char *name, const void *ptr) {
+            checks.push_back({name, ptr});
+        };
+        if (ver <= 9) {
+            addCheck("getBuiltInDisplay", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetBuiltInDisplay));
+        }
+        if (ver <= 10) {
+            addCheck("getDisplayInfo", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetDisplayInfo));
+        }
+        if (ver >= 10) {
+            addCheck("LayerMetadata 构造函数", reinterpret_cast<const void *>(funcs.LayerMetadata__Constructor));
+        }
+        if (ver >= 10 && ver < 12) {
+            addCheck("LayerMetadata::setInt32", reinterpret_cast<const void *>(funcs.LayerMetadata__setInt32));
+        }
+        if (ver >= 10 && ver < 14) {
+            addCheck("getInternalDisplayToken", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetInternalDisplayToken));
+        }
+        if (ver >= 11) {
+            addCheck("getDisplayState", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetDisplayState));
+        }
+        if (ver >= 12) {
+            addCheck("Transaction 构造函数", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__Constructor));
+            addCheck("Transaction::setTrustedOverlay", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__SetTrustedOverlay));
+            addCheck("Transaction::apply", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__Apply));
+        }
+        if (ver >= 14) {
+            addCheck("getPhysicalDisplayIds", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetPhysicalDisplayIds));
+            addCheck("getPhysicalDisplayToken", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetPhysicalDisplayToken));
+        }
         int missing = 0;
         for (const auto &c : checks) {
             if (c.ptr == nullptr) {
