@@ -54,7 +54,10 @@ void Menu_Draw(MenuState *state)
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse
                            | ImGuiWindowFlags_AlwaysAutoResize;
-    if (igBegin("Game Modifier", NULL, flags)) {
+    /* 传 &window_open 后标题栏会多一个 X，点它同样退出整个程序 */
+    static bool window_open = true;
+    bool visible = igBegin("Game Modifier", &window_open, flags);
+    if (visible) {
 
         igTextColored((ImVec4_c){ 0.62f, 0.62f, 0.68f, 1.00f }, "功能");
         igSeparator();
@@ -80,6 +83,17 @@ void Menu_Draw(MenuState *state)
         }
 
         igSpacing();
+
+        /* 退出按钮：整行宽，暗红色，点了直接退出整个程序 */
+        igPushStyleColor_Vec4(ImGuiCol_Button,        (ImVec4_c){ 0.40f, 0.13f, 0.15f, 1.00f });
+        igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4_c){ 0.55f, 0.18f, 0.20f, 1.00f });
+        igPushStyleColor_Vec4(ImGuiCol_ButtonActive,  (ImVec4_c){ 0.68f, 0.22f, 0.25f, 1.00f });
+        if (igButton("退出程序", (ImVec2_c){ -1.0f, 0.0f })) {
+            OnExitRequested();
+        }
+        igPopStyleColor(3);
+
+        igSpacing();
         igTextDisabled("按住标题栏拖动 · 终端版");
 
         /* 触摸调试行：坐标跟着触摸实时变，用来排查点不动 */
@@ -88,4 +102,9 @@ void Menu_Draw(MenuState *state)
         }
     }
     igEnd();
+
+    /* 标题栏 X 被点掉时也退出整个程序 */
+    if (!window_open) {
+        OnExitRequested();
+    }
 }

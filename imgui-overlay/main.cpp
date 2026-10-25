@@ -12,7 +12,7 @@
  *   chmod 755 gamemodifier_imgui
  *   su
  *   ./gamemodifier_imgui
- * 退出：在终端按 Ctrl+C。
+ * 退出：点窗体里的「退出程序」按钮或标题栏 X，或在终端按 Ctrl+C。
  */
 
 #include <algorithm>
@@ -53,6 +53,12 @@ extern "C" void OnFeatureToggled(int enabled)
         std::lock_guard<std::mutex> lock2(g_statusMutex);
         g_lastResult.clear();
     }
+}
+
+/* 窗体里点「退出程序」按钮或标题栏 X：停主循环，后面统一走清理退出 */
+extern "C" void OnExitRequested()
+{
+    g_running = 0;
 }
 
 /* 后台线程：功能开启期间每秒执行一次写入，把结果存下来给界面显示 */

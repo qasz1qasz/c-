@@ -24,6 +24,10 @@ typedef struct {
  * enabled: 1 = 勾选（开启），0 = 取消勾选（关闭） */
 void OnFeatureToggled(int enabled);
 
+/* 用户点「退出程序」按钮或标题栏的 X 时回调到主程序：
+ * 主程序停主循环、关悬浮层、结束整个进程 */
+void OnExitRequested(void);
+
 /* 应用样式（颜色、圆角、间距）。在 igCreateContext 之后调用一次。 */
 void MenuStyle_Apply(void);
 
