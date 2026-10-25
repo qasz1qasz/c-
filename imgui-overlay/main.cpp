@@ -28,6 +28,7 @@
 #include "GraphicsManager.h"
 #include "my_imgui.h"
 #include "touch_input.h"
+#include "volume_keys.h"
 
 extern "C" {
 #include "imgui_menu.h"
@@ -35,6 +36,7 @@ extern "C" {
 }
 
 static MenuState g_menu{};                 /* 界面状态（主线程读写） */
+static bool g_windowVisible = true;        /* 窗体显示开关：音量+ 显示、音量- 隐藏 */
 static std::mutex g_statusMutex;           /* 保护 g_lastResult */
 static std::string g_lastResult;           /* 后台线程写、主线程读的执行结果 */
 static volatile std::sig_atomic_t g_running = 1;
@@ -167,11 +169,20 @@ int main()
         printf("警告：触摸初始化失败，悬浮窗能显示但点不动（原因见上面一行）。\n");
     }
 
+    /* 5. 音量键（同样只读旁听 /dev/input）：音量+ 显示窗体、音量- 隐藏窗体 */
+    if (!VolumeKeys::Init()) {
+        printf("警告：音量键监听没起来，窗体只能一直显示（原因见上面一行）。\n");
+    }
+
     std::thread worker(FeatureWorker);
 
-    /* 5. 主循环 */
-    printf("悬浮窗已启动。关闭终端或按 Ctrl+C 退出。\n");
+    /* 6. 主循环 */
+    printf("悬浮窗已启动。音量+ 显示窗体，音量- 隐藏窗体；点窗内「退出程序」或 Ctrl+C 退出。\n");
     while (g_running) {
+        /* 音量键开关窗体（隐藏只是不画窗，功能开关状态不变） */
+        if (VolumeKeys::ConsumeShowRequest()) g_windowVisible = true;
+        if (VolumeKeys::ConsumeHideRequest()) g_windowVisible = false;
+
         /* 触摸事件必须赶在 NewFrame 之前喂进 ImGui 的事件队列 */
         TouchInput::SetOrientation(
                 (int)android::ANativeWindowCreator::GetDisplayInfo().orientation);
@@ -179,19 +190,20 @@ int main()
 
         graphics->NewFrame();
 
-        {
+        if (g_windowVisible) {
             std::lock_guard<std::mutex> lock(g_statusMutex);
             std::snprintf(g_menu.status_text, sizeof(g_menu.status_text),
                           "%s", g_lastResult.c_str());
+            TouchInput::GetDebugText(g_menu.debug_text, sizeof(g_menu.debug_text));
+            Menu_Draw(&g_menu);
         }
-        TouchInput::GetDebugText(g_menu.debug_text, sizeof(g_menu.debug_text));
-        Menu_Draw(&g_menu);
 
         graphics->EndFrame();
     }
 
     g_running = 0;
     if (worker.joinable()) worker.join();
+    VolumeKeys::Shutdown();
     TouchInput::Shutdown();
     graphics->Shutdown();
     android::ANativeWindowCreator::Destroy(window);

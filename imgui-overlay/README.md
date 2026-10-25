@@ -11,6 +11,7 @@
 | `feature_write.c/.h` | C | 功能本体：用户提供的 GameGuardian Lua 脚本翻成的 C——找 `com.rekoo.pubgm` 进程、取 `libUE4.so` 的 bss 段、按指针链（64 位）解析、把值按 float 写成 110.0；勾选期间每秒写一次，对应 Lua 的 freeze=true（文件头有完整对照表） |
 | `main.cpp` | C++ | 平台层：建悬浮层、OpenGL ES 渲染、主循环、后台写入线程 |
 | `touch_input.cpp/.h` | C++ | 触摸：自己读 `/dev/input`，坐标按屏幕方向换算，经 ImGui 事件队列注入；窗体底部有触摸调试行 |
+| `volume_keys.cpp/.h` | C++ | 音量键监听：只读旁听 `/dev/input` 的音量键事件，音量+ 显示窗体、音量- 隐藏窗体 |
 | `patch_android16.py` | Python | 构建时给 AndroidImgui 的符号补丁表补 Android 16 条目（build.sh 调用） |
 
 ImGui 本体是 C++ 库，所以界面代码用官方 C 绑定 cimgui 写成纯 C；
@@ -47,6 +48,8 @@ su
   （成功/失败原因）；取消勾选即停止。
 - 退出：点窗体里的「退出程序」按钮（或标题栏的 X），悬浮层和程序一起关掉；也可以回终端按 Ctrl+C。
 - 触摸是只读旁路，不拦截游戏操作；拖动窗口按住标题栏即可。
+- 音量+ 显示窗体、音量- 隐藏窗体（隐藏只是不画窗，功能开关状态不变）；
+  音量键同样是只读旁听、不拦截，所以按的时候系统音量也会跟着变。
 
 ## 已知限制
 

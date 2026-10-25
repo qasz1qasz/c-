@@ -29,6 +29,7 @@ target_link_libraries(cimgui PUBLIC AndroidImgui)
 add_executable(gamemodifier_imgui
         main.cpp
         touch_input.cpp
+        volume_keys.cpp
         imgui_menu.c
         feature_write.c)
 
