@@ -1,0 +1,53 @@
+# ImGui 悬浮窗（终端可执行版）
+
+一个能在安卓终端里以 root 直接运行的 ImGui 悬浮窗，产物名 `gamemodifier_imgui`（arm64-v8a）。
+窗口里只有一个功能：复选框「数值修改（写入 110）」。
+
+## 文件分工
+
+| 文件 | 语言 | 作用 |
+|---|---|---|
+| `imgui_menu.c/.h` | C（cimgui） | 界面：样式（深色、圆角 8、主色紫 #6C4DFF）+ 唯一的复选框 + 状态行 |
+| `feature_write.c/.h` | C | 功能本体：找 `com.rekoo.pubgm` 进程、取 `libil2cpp.so` 基址、按指针链把值写成 110（与终端版 `modifier_main.c` 同一套逻辑） |
+| `main.cpp` | C++ | 平台层：建悬浮层、OpenGL ES 渲染、读触摸、主循环、后台写入线程 |
+
+ImGui 本体是 C++ 库，所以界面代码用官方 C 绑定 cimgui 写成纯 C；
+只有平台层（系统窗口/触摸接口本身就是 C++）用 C++。
+
+## 依赖（build.sh 自动拉齐，版本钉死）
+
+- Dear ImGui v1.92.7
+- cimgui 1.92.7（与 ImGui 同版本，避免结构体对不齐）
+- AndroidImgui v2.1（enenH/AndroidImgui）：通过系统 `libgui` 的 SurfaceComposerClient
+  创建悬浮层，触摸从 `/dev/input` 只读旁路读取；其 ImGui 子目录改为指向同一份 v1.92.7 源码
+
+## 编译
+
+GitHub Actions 会在原有 workflow 里多编这一个产物；本地编：
+
+```bash
+cd imgui-overlay
+bash build.sh   # 需要 Android NDK（27.x）和 cmake
+```
+
+产物在 `build/gamemodifier_imgui`，也会发布到仓库 Releases 的 `latest` 里。
+
+## 运行
+
+```bash
+chmod 755 gamemodifier_imgui
+su
+./gamemodifier_imgui
+```
+
+- 先开游戏再勾选复选框：勾选后每秒写入一次，窗口里会显示最近一次结果
+  （成功/失败原因）；取消勾选即停止。
+- 退出：回终端按 Ctrl+C。
+- 触摸是只读旁路，不拦截游戏操作；拖动窗口按住标题栏即可。
+
+## 已知限制
+
+- 平台层依赖系统私有接口（libgui 符号），AndroidImgui 的符号表覆盖到 Android 15；
+  Android 16 或个别厂商 ROM 上若启动时报 Method not found / 拿不到屏幕信息，就是这个原因。
+- 指针链偏移与之前一样，游戏更新后可能失效，窗口状态行会提示「指针为空」。
+- 真机显示效果以实跑为准（云端只能验证编译通过）。
