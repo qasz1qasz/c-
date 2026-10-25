@@ -39,6 +39,11 @@ jobs:
           ls -lh libs-exec/arm64-v8a/
           file libs-exec/arm64-v8a/gamemodifier
 
+      - name: Build ImGui overlay executable
+        working-directory: imgui-overlay
+        run: |
+          bash build.sh
+
       - name: Upload SO artifact
         uses: actions/upload-artifact@v4
         with:
@@ -55,6 +60,14 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Upload ImGui overlay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamemodifier-imgui
+          path: imgui-overlay/build/gamemodifier_imgui
+          if-no-files-found: error
+          retention-days: 90
+
       # 编译成功后把 .so 和终端可执行版一起发到 Releases 的 latest 里，手机上点开就能直接下载
       - name: Publish SO to Releases
         env:
@@ -62,5 +75,6 @@ jobs:
         run: |
           cp libs/arm64-v8a/libgamemodifier.so libgamemodifier.so
           cp libs-exec/arm64-v8a/gamemodifier gamemodifier
+          cp imgui-overlay/build/gamemodifier_imgui gamemodifier_imgui
           gh release delete latest --cleanup-tag --yes || true
-          gh release create latest libgamemodifier.so gamemodifier --title "libgamemodifier" --notes "每次推送自动编译的最新 arm64-v8a 版：libgamemodifier.so 给 App 加载用；gamemodifier 是终端版，下载后 chmod 755，以 root 在终端运行。"
+          gh release create latest libgamemodifier.so gamemodifier gamemodifier_imgui --title "libgamemodifier" --notes "每次推送自动编译的最新 arm64-v8a 版：libgamemodifier.so 给 App 加载用；gamemodifier 是终端版；gamemodifier_imgui 是 ImGui 悬浮窗版。后两者下载后 chmod 755，以 root 在终端运行。"
