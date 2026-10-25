@@ -15,10 +15,15 @@ set(DEPS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps)
 # 平台层：窗口创建 / 渲染后端（依赖由 build.sh 拉齐，imgui 子目录已指向 v1.92.7）
 add_subdirectory(${DEPS_DIR}/AndroidImgui ${CMAKE_BINARY_DIR}/AndroidImgui)
 
+# ImGui 1.92.7 的字体加载器声明有个坑：定义了 IMGUI_ENABLE_FREETYPE 后，
+# stb_truetype 加载器默认不再启用，而 cimgui 的生成代码会无条件引用它，
+# 所以必须两个宏一起开（官方注释也说明可以同时启用两个加载器）
+target_compile_definitions(AndroidImgui PUBLIC IMGUI_ENABLE_STB_TRUETYPE)
+
 # 界面 C 绑定：cimgui 1.92.7（与 Dear ImGui v1.92.7 同版本，避免结构体对不齐）
 add_library(cimgui STATIC ${DEPS_DIR}/cimgui/cimgui.cpp)
 target_include_directories(cimgui PUBLIC ${DEPS_DIR}/cimgui ${DEPS_DIR}/imgui)
-target_compile_definitions(cimgui PUBLIC IMGUI_ENABLE_FREETYPE)
+target_compile_definitions(cimgui PUBLIC IMGUI_ENABLE_FREETYPE IMGUI_ENABLE_STB_TRUETYPE)
 target_link_libraries(cimgui PUBLIC AndroidImgui)
 
 add_executable(gamemodifier_imgui
