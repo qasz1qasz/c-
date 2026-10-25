@@ -81,6 +81,11 @@ void Menu_Draw(MenuState *state)
 
         igSpacing();
         igTextDisabled("按住标题栏拖动 · 终端版");
+
+        /* 触摸调试行：坐标跟着触摸实时变，用来排查点不动 */
+        if (state->debug_text[0] != '\0') {
+            igTextDisabled("%s", state->debug_text);
+        }
     }
     igEnd();
 }

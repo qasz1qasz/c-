@@ -9,7 +9,8 @@
 |---|---|---|
 | `imgui_menu.c/.h` | C（cimgui） | 界面：样式（深色、圆角 8、主色紫 #6C4DFF）+ 唯一的复选框 + 状态行 |
 | `feature_write.c/.h` | C | 功能本体：找 `com.rekoo.pubgm` 进程、取 `libil2cpp.so` 基址、按指针链把值写成 110（与终端版 `modifier_main.c` 同一套逻辑） |
-| `main.cpp` | C++ | 平台层：建悬浮层、OpenGL ES 渲染、读触摸、主循环、后台写入线程 |
+| `main.cpp` | C++ | 平台层：建悬浮层、OpenGL ES 渲染、主循环、后台写入线程 |
+| `touch_input.cpp/.h` | C++ | 触摸：自己读 `/dev/input`，坐标按屏幕方向换算，经 ImGui 事件队列注入；窗体底部有触摸调试行 |
 
 ImGui 本体是 C++ 库，所以界面代码用官方 C 绑定 cimgui 写成纯 C；
 只有平台层（系统窗口/触摸接口本身就是 C++）用 C++。
@@ -19,7 +20,8 @@ ImGui 本体是 C++ 库，所以界面代码用官方 C 绑定 cimgui 写成纯 
 - Dear ImGui v1.92.7
 - cimgui 1.92.7（与 ImGui 同版本，避免结构体对不齐）
 - AndroidImgui v2.1（enenH/AndroidImgui）：通过系统 `libgui` 的 SurfaceComposerClient
-  创建悬浮层，触摸从 `/dev/input` 只读旁路读取；其 ImGui 子目录改为指向同一份 v1.92.7 源码
+  创建悬浮层；其 ImGui 子目录改为指向同一份 v1.92.7 源码。
+  注：触摸不用它自带的 TouchHelperA（在另一台手机实测点不动、拖不动），改自己实现
 
 ## 编译
 

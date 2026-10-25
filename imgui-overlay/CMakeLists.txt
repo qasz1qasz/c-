@@ -28,13 +28,12 @@ target_link_libraries(cimgui PUBLIC AndroidImgui)
 
 add_executable(gamemodifier_imgui
         main.cpp
-        ${DEPS_DIR}/AndroidImgui/test/TouchHelperA.cpp
+        touch_input.cpp
         imgui_menu.c
         feature_write.c)
 
 target_include_directories(gamemodifier_imgui PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${DEPS_DIR}/AndroidImgui/test
         ${DEPS_DIR}/cimgui)
 
 target_link_libraries(gamemodifier_imgui PRIVATE

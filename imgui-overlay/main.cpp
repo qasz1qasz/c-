@@ -4,8 +4,9 @@
  * 界面和功能都是 C 写的（imgui_menu.c / feature_write.c），
  * 这里只负责安卓平台层：建全屏透明 Surface、OpenGL ES 渲染、读触摸。
  * 平台层用开源库 AndroidImgui（enenH/AndroidImgui v2.1）：
- * 它通过系统 libgui 的 SurfaceComposerClient 创建悬浮层，
- * 触摸从 /dev/input 只读旁路读取后喂给 ImGui。
+ * 它通过系统 libgui 的 SurfaceComposerClient 创建悬浮层。
+ * 触摸是我们自己写的 touch_input.cpp：直接读 /dev/input，
+ * 经 ImGui 事件队列注入（库自带的 TouchHelperA 实测点不动，已弃用）。
  *
  * 用法（root 终端）：
  *   chmod 755 gamemodifier_imgui
@@ -26,7 +27,7 @@
 #include "ANativeWindowCreator.h"
 #include "GraphicsManager.h"
 #include "my_imgui.h"
-#include "TouchHelperA.h"
+#include "touch_input.h"
 
 extern "C" {
 #include "imgui_menu.h"
@@ -117,9 +118,9 @@ int main()
     }
     MenuStyle_Apply();
 
-    /* 4. 触摸（只读旁路：不拦截游戏操作，只把坐标喂给 ImGui） */
-    if (!Touch::Init(Vector2((float)display.width, (float)display.height), true)) {
-        printf("警告：触摸初始化失败，悬浮窗能显示但点不动（多半是没 root）。\n");
+    /* 4. 触摸（自己读 /dev/input，只读旁路：不拦截游戏操作） */
+    if (!TouchInput::Init(display.width, display.height)) {
+        printf("警告：触摸初始化失败，悬浮窗能显示但点不动（原因见上面一行）。\n");
     }
 
     std::thread worker(FeatureWorker);
@@ -127,15 +128,19 @@ int main()
     /* 5. 主循环 */
     printf("悬浮窗已启动。关闭终端或按 Ctrl+C 退出。\n");
     while (g_running) {
-        graphics->NewFrame();
-        Touch::setOrientation(
+        /* 触摸事件必须赶在 NewFrame 之前喂进 ImGui 的事件队列 */
+        TouchInput::SetOrientation(
                 (int)android::ANativeWindowCreator::GetDisplayInfo().orientation);
+        TouchInput::Poll();
+
+        graphics->NewFrame();
 
         {
             std::lock_guard<std::mutex> lock(g_statusMutex);
             std::snprintf(g_menu.status_text, sizeof(g_menu.status_text),
                           "%s", g_lastResult.c_str());
         }
+        TouchInput::GetDebugText(g_menu.debug_text, sizeof(g_menu.debug_text));
         Menu_Draw(&g_menu);
 
         graphics->EndFrame();
@@ -143,7 +148,7 @@ int main()
 
     g_running = 0;
     if (worker.joinable()) worker.join();
-    Touch::Close();
+    TouchInput::Shutdown();
     graphics->Shutdown();
     android::ANativeWindowCreator::Destroy(window);
     printf("已退出。\n");

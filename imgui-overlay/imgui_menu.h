@@ -17,6 +17,7 @@ extern "C" {
 typedef struct {
     bool feature_on;     /* 复选框：数值修改（写入 110） */
     char status_text[128]; /* 主程序填的最近一次执行结果，空字符串就不显示 */
+    char debug_text[128];  /* 主程序填的触摸调试信息，空字符串就不显示 */
 } MenuState;
 
 /* 功能开关被用户点动时回调到主程序（主程序里实现它，负责真正去写内存）。
