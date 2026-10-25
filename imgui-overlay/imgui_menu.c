@@ -63,7 +63,7 @@ void Menu_Draw(MenuState *state)
         igSeparator();
 
         /* 唯一的功能：一个复选框。点动时通知主程序。 */
-        if (igCheckbox("数值修改（写入 110）", &state->feature_on)) {
+        if (igCheckbox("数值修改（写入 110.0）", &state->feature_on)) {
             OnFeatureToggled(state->feature_on ? 1 : 0);
         }
 

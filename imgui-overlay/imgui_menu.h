@@ -15,7 +15,7 @@ extern "C" {
 
 /* 悬浮窗的全部状态：目前只有一个功能开关 */
 typedef struct {
-    bool feature_on;     /* 复选框：数值修改（写入 110） */
+    bool feature_on;     /* 复选框：数值修改（写入 110.0） */
     char status_text[128]; /* 主程序填的最近一次执行结果，空字符串就不显示 */
     char debug_text[128];  /* 主程序填的触摸调试信息，空字符串就不显示 */
 } MenuState;

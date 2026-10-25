@@ -1,12 +1,28 @@
 /*
  * feature_write.c - 复选框功能本体（C 语言）
  *
- * 与仓库里的终端版 modifier_main.c 同一套逻辑和参数：
- *   包名 com.rekoo.pubgm，模块 libil2cpp.so，
- *   指针链 0x56CFF0 -> 0x30 -> 0x4B8 -> 0x360 -> 0x170 -> 0x39C，写 110。
- * 写法同样按修正版：指针按 64 位读、首偏移加模块基址、包名精确匹配。
+ * 这是用户提供的 GameGuardian Lua 脚本（S_Pointer + gg.addListItems）
+ * 逐行翻成的 C，勾选复选框后由主程序每秒调一次，相当于 Lua 里的 freeze=true。
+ *
+ * Lua -> C 对照：
+ *   gg.getRangesList + state "Cb" + 名字 "libUE4.so:bss"
+ *     -> 在 /proc/<pid>/maps 里找 libUE4.so 文件映射之后紧跟的第一个
+ *        可写匿名映射，那就是它的 .bss 段，用它的起始地址当锚点
+ *        （注意：不是 libUE4.so 的装载基址，Lua 锚的是 bss）
+ *   指针链 {0x56CFF0, 0x30, 0x4B8, 0x360, 0x170, 0x39C}，_bit=true
+ *     -> 首地址 = bss + 0x56CFF0，之后每级按 64 位读指针再加下一偏移，
+ *        共读 5 次，最终地址 = 最后指针 + 0x39C
+ *   gg.addListItems({flags = 16, value = 110, freeze = true})
+ *     -> flags 16 是 GG 的 TYPE_FLOAT：把 110 按 float 写入（不是整数），
+ *        freeze 对应这里的每秒重复写入
+ *   Lua 里那句 print 是作者水印（"缤:" + 一个常数），无功能，未翻译。
+ *
+ * 目标包名 com.rekoo.pubgm 沿用之前终端版的设定
+ * （Lua 在 GG 里是手动选进程的，没有写包名）。
  * gamemodifier.c 未改动。
  */
+
+#define _POSIX_C_SOURCE 200809L /* pread/pwrite 的声明 */
 
 #include "feature_write.h"
 
@@ -14,14 +30,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <errno.h>
 
 #define TARGET_PACKAGE "com.rekoo.pubgm"
-#define TARGET_MODULE  "libil2cpp.so"
-#define WRITE_VALUE    110
+#define TARGET_MODULE  "libUE4.so"
+#define WRITE_VALUE    110.0f   /* Lua: value = 110, flags = 16 (float) */
 
 static const uintptr_t OFFSETS[] = {
     0x56CFF0, 0x30, 0x4B8, 0x360, 0x170, 0x39C
@@ -62,7 +79,57 @@ static pid_t FindProcessByPackage(const char *packageName)
     return result;
 }
 
-static uintptr_t FindModuleBase(pid_t pid, const char *moduleName)
+/*
+ * 在 maps 里找 moduleName 的 .bss 段起始地址：
+ * 先出现该模块的文件映射，紧接着的第一个「匿名 + 可写」映射就是 bss。
+ * GG 里这个范围的名字是 "libUE4.so:bss"、state 是 "Cb"（C BSS），
+ * 且它只取可写范围（type 第二个字符是 'w'），与这里 perms[1] == 'w' 对应。
+ * 找不到返回 0。单独拆出来是为了能在电脑上拿样本 maps 单测。
+ */
+static uintptr_t FindModuleBssBaseFromMaps(FILE *fp, const char *moduleName)
+{
+    char line[1024];
+    int seenModule = 0;
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        uintptr_t start = (uintptr_t)strtoull(line, NULL, 16);
+
+        char perms[8] = {0};
+        char path[512] = {0};
+        int n = sscanf(line, "%*s %7s %*s %*s %*s %511[^\n]", perms, path);
+        bool hasPath = (n == 2 && path[0] != '\0');
+
+        if (hasPath) {
+            /* 路径尾巴可能带 " (deleted)"，先去掉 */
+            char *deleted = strstr(path, " (deleted)");
+            if (deleted) *deleted = '\0';
+        }
+
+        /* 是不是目标模块的文件映射：比对路径最后一段文件名 */
+        bool isModuleFile = false;
+        if (hasPath) {
+            const char *slash = strrchr(path, '/');
+            const char *base = slash ? slash + 1 : path;
+            isModuleFile = (strcmp(base, moduleName) == 0);
+        }
+
+        /* 匿名映射：没有路径，或被标成 [anon:.bss] 之类 */
+        bool isAnon = !hasPath || strstr(path, ".bss") != NULL;
+
+        if (isModuleFile) {
+            seenModule = 1;
+            continue;
+        }
+        if (seenModule && isAnon) {
+            if (perms[1] == 'w') return start;   /* 找到了：bss 起始 */
+            continue;                            /* 不可写的匿名段先跳过 */
+        }
+        if (hasPath) seenModule = 0;             /* 换成别的文件了，重置 */
+    }
+    return 0;
+}
+
+static uintptr_t FindModuleBssBase(pid_t pid, const char *moduleName)
 {
     char mapsPath[256];
     snprintf(mapsPath, sizeof(mapsPath), "/proc/%d/maps", (int)pid);
@@ -70,14 +137,7 @@ static uintptr_t FindModuleBase(pid_t pid, const char *moduleName)
     FILE *fp = fopen(mapsPath, "r");
     if (!fp) return 0;
 
-    char line[1024];
-    uintptr_t base = 0;
-
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        if (strstr(line, moduleName) == NULL) continue;
-        base = (uintptr_t)strtoull(line, NULL, 16);
-        break;
-    }
+    uintptr_t base = FindModuleBssBaseFromMaps(fp, moduleName);
     fclose(fp);
     return base;
 }
@@ -112,17 +172,17 @@ static int WriteProcessMemory(pid_t pid, uintptr_t address, const void *buffer, 
     return (ret == (ssize_t)size) ? 0 : -1;
 }
 
-/* 成功返回最终地址，失败返回 0 并通过 failStep/failErrno 说明原因 */
-static uintptr_t ResolvePointerChain(pid_t pid, uintptr_t moduleBase,
+/* 成功返回最终地址，失败返回 0 并通过 failStep/failErrno/failNull 说明原因 */
+static uintptr_t ResolvePointerChain(pid_t pid, uintptr_t bssBase,
                                      int *failStep, int *failErrno, int *failNull)
 {
-    uintptr_t current = moduleBase + OFFSETS[0];
+    uintptr_t current = bssBase + OFFSETS[0];
     *failStep = 0;
     *failErrno = 0;
     *failNull = 0;
 
     for (size_t i = 1; i < OFFSET_COUNT; i++) {
-        uint64_t ptr = 0;
+        uint64_t ptr = 0;   /* Lua _bit=true：指针按 64 位（GG 的 QWORD）读 */
         if (ReadProcessMemory(pid, current, &ptr, sizeof(ptr)) != 0) {
             *failStep = (int)i;
             *failErrno = errno;
@@ -154,14 +214,14 @@ int Feature_ApplyWrite(char *message, size_t messageSize)
         return 1;
     }
 
-    uintptr_t moduleBase = FindModuleBase(pid, TARGET_MODULE);
-    if (moduleBase == 0) {
-        snprintf(message, messageSize, "失败：未找到 %s 基址", TARGET_MODULE);
+    uintptr_t bssBase = FindModuleBssBase(pid, TARGET_MODULE);
+    if (bssBase == 0) {
+        snprintf(message, messageSize, "失败：未找到 %s 的 bss 段", TARGET_MODULE);
         return 1;
     }
 
     int failStep = 0, failErrno = 0, failNull = 0;
-    uintptr_t finalAddr = ResolvePointerChain(pid, moduleBase, &failStep, &failErrno, &failNull);
+    uintptr_t finalAddr = ResolvePointerChain(pid, bssBase, &failStep, &failErrno, &failNull);
     if (finalAddr == 0) {
         if (failNull) {
             snprintf(message, messageSize, "失败：指针链第 %d 步为空，偏移可能已失效", failStep);
@@ -172,26 +232,25 @@ int Feature_ApplyWrite(char *message, size_t messageSize)
         return 1;
     }
 
-    uint32_t oldValue = 0;
+    float oldValue = 0.0f;
     if (ReadProcessMemory(pid, finalAddr, &oldValue, sizeof(oldValue)) != 0) {
         snprintf(message, messageSize, "失败：读取当前值失败（%s）", strerror(errno));
         return 1;
     }
 
-    uint32_t newValue = WRITE_VALUE;
+    float newValue = WRITE_VALUE;
     if (WriteProcessMemory(pid, finalAddr, &newValue, sizeof(newValue)) != 0) {
         snprintf(message, messageSize, "失败：写入失败（%s）", strerror(errno));
         return 1;
     }
 
-    uint32_t checkValue = 0;
+    float checkValue = 0.0f;
     if (ReadProcessMemory(pid, finalAddr, &checkValue, sizeof(checkValue)) == 0
-            && checkValue != (uint32_t)WRITE_VALUE) {
-        snprintf(message, messageSize, "失败：写入后读回 %u，与 110 不一致",
-                 (unsigned int)checkValue);
+            && checkValue != WRITE_VALUE) {
+        snprintf(message, messageSize, "失败：写入后读回 %g，与 110 不一致", (double)checkValue);
         return 1;
     }
 
-    snprintf(message, messageSize, "成功：已写入 110（原值 %u）", (unsigned int)oldValue);
+    snprintf(message, messageSize, "成功：已写入 110.0（float，原值 %g）", (double)oldValue);
     return 0;
 }
