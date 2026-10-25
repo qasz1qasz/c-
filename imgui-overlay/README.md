@@ -7,7 +7,7 @@
 
 | 文件 | 语言 | 作用 |
 |---|---|---|
-| `imgui_menu.c/.h` | C（cimgui） | 界面：样式（深色、圆角 8、主色紫 #6C4DFF）+ 唯一的复选框 + 状态行 |
+| `imgui_menu.c/.h` | C（cimgui） | 界面：样式（深色、圆角 8、主色紫 #6C4DFF）+ 唯一的滑动开关（自绘，带动画）+ 状态行 + 退出按钮 |
 | `feature_write.c/.h` | C | 功能本体：用户提供的 GameGuardian Lua 脚本翻成的 C——找 `com.rekoo.pubgm` 进程、取 `libUE4.so` 的 bss 段、按指针链（64 位）解析、把值按 float 写成 110.0；勾选期间每秒写一次，对应 Lua 的 freeze=true（文件头有完整对照表） |
 | `main.cpp` | C++ | 平台层：建悬浮层、OpenGL ES 渲染、主循环、后台写入线程 |
 | `touch_input.cpp/.h` | C++ | 触摸：自己读 `/dev/input`，坐标按屏幕方向换算，经 ImGui 事件队列注入；窗体底部有触摸调试行 |
