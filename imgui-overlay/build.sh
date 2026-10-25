@@ -40,6 +40,10 @@ git -C deps/AndroidImgui submodule update --init freetype
 rm -rf deps/AndroidImgui/imgui
 ln -sfn "$PWD/deps/imgui" deps/AndroidImgui/imgui
 
+# Android 16 适配：上游符号补丁表只到 Android 15，给它补上 16（与 15 同一套符号，
+# 已按 AOSP android-16.0.0_r1 源码核对）。不补的话在安卓 16 上解析到空指针，启动即段错误。
+python3 patch_android16.py deps/AndroidImgui/src/ANativeWindowCreator.h
+
 cmake -S . -B build \
     -DCMAKE_TOOLCHAIN_FILE="$NDK_HOME/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI=arm64-v8a \

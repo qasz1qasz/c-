@@ -86,6 +86,44 @@ int main()
         printf("请先 su 再运行，否则大概率失败。\n");
     }
 
+    /* 0. 系统接口自检：平台层靠运行时解析 libgui 的私有符号建窗，
+     * 某个符号在本机系统上不存在时指针就是空的，旧版直接调用会段错误、什么都看不到。
+     * 这里先逐个验一遍，缺了就把名字打印出来再退出，方便对着系统版本适配。 */
+    {
+        const auto &funcs = android::detail::Functionals::GetInstance();
+        printf("系统版本：Android %zu\n", funcs.systemVersion);
+        struct SymbolCheck { const char *name; const void *ptr; };
+        const SymbolCheck checks[] = {
+            {"RefBase::incStrong",     reinterpret_cast<const void *>(funcs.RefBase__IncStrong)},
+            {"RefBase::decStrong",     reinterpret_cast<const void *>(funcs.RefBase__DecStrong)},
+            {"String8 构造函数",        reinterpret_cast<const void *>(funcs.String8__Constructor)},
+            {"String8 析构函数",        reinterpret_cast<const void *>(funcs.String8__Destructor)},
+            {"LayerMetadata 构造函数",  reinterpret_cast<const void *>(funcs.LayerMetadata__Constructor)},
+            {"SurfaceComposerClient 构造函数", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Constructor)},
+            {"SurfaceComposerClient::createSurface", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__CreateSurface)},
+            {"getPhysicalDisplayIds",  reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetPhysicalDisplayIds)},
+            {"getPhysicalDisplayToken", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetPhysicalDisplayToken)},
+            {"getDisplayState",        reinterpret_cast<const void *>(funcs.SurfaceComposerClient__GetDisplayState)},
+            {"Transaction 构造函数",    reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__Constructor)},
+            {"Transaction::setTrustedOverlay", reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__SetTrustedOverlay)},
+            {"Transaction::apply",     reinterpret_cast<const void *>(funcs.SurfaceComposerClient__Transaction__Apply)},
+            {"SurfaceControl::validate", reinterpret_cast<const void *>(funcs.SurfaceControl__Validate)},
+            {"SurfaceControl::getSurface", reinterpret_cast<const void *>(funcs.SurfaceControl__GetSurface)},
+            {"SurfaceControl::disconnect", reinterpret_cast<const void *>(funcs.SurfaceControl__DisConnect)},
+        };
+        int missing = 0;
+        for (const auto &c : checks) {
+            if (c.ptr == nullptr) {
+                printf("缺失系统接口：%s\n", c.name);
+                missing++;
+            }
+        }
+        if (missing > 0) {
+            printf("失败：%d 个系统接口在本机系统上找不到，悬浮层建不出来（缺失名单见上）。\n", missing);
+            return 1;
+        }
+    }
+
     /* 1. 拿屏幕信息并创建全屏悬浮层（长边为宽，方形画布覆盖旋转前后的屏幕） */
     auto display = android::ANativeWindowCreator::GetDisplayInfo();
     if (display.width <= 0 || display.height <= 0) {

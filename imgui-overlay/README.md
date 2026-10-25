@@ -11,6 +11,7 @@
 | `feature_write.c/.h` | C | 功能本体：找 `com.rekoo.pubgm` 进程、取 `libil2cpp.so` 基址、按指针链把值写成 110（与终端版 `modifier_main.c` 同一套逻辑） |
 | `main.cpp` | C++ | 平台层：建悬浮层、OpenGL ES 渲染、主循环、后台写入线程 |
 | `touch_input.cpp/.h` | C++ | 触摸：自己读 `/dev/input`，坐标按屏幕方向换算，经 ImGui 事件队列注入；窗体底部有触摸调试行 |
+| `patch_android16.py` | Python | 构建时给 AndroidImgui 的符号补丁表补 Android 16 条目（build.sh 调用） |
 
 ImGui 本体是 C++ 库，所以界面代码用官方 C 绑定 cimgui 写成纯 C；
 只有平台层（系统窗口/触摸接口本身就是 C++）用 C++。
@@ -49,7 +50,10 @@ su
 
 ## 已知限制
 
-- 平台层依赖系统私有接口（libgui 符号），AndroidImgui 的符号表覆盖到 Android 15；
-  Android 16 或个别厂商 ROM 上若启动时报 Method not found / 拿不到屏幕信息，就是这个原因。
+- 平台层依赖系统私有接口（libgui 符号），AndroidImgui 的符号表只到 Android 15；
+  构建时用 `patch_android16.py` 给它补上了 Android 16 条目（与 15 同一套符号，
+  已按 AOSP android-16.0.0_r1 源码核对）。程序启动时还会先自检一遍要用的系统接口，
+  哪个缺失会直接打印名字并退出，不再像旧版那样空指针段错误、什么都看不到；
+  个别厂商 ROM 若仍有符号差异，把终端里「缺失系统接口」那几行发回来即可继续适配。
 - 指针链偏移与之前一样，游戏更新后可能失效，窗口状态行会提示「指针为空」。
 - 真机显示效果以实跑为准（云端只能验证编译通过）。
