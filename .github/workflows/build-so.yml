@@ -1,0 +1,50 @@
+name: Build SO
+
+# 推送代码自动编译 .so，也可以在 Actions 页面手动点 Run workflow
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build libgamemodifier.so
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install NDK
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;27.0.12077973"
+
+      - name: Build SO with ndk-build
+        run: |
+          NDK_BUILD="$ANDROID_HOME/ndk/27.0.12077973/ndk-build"
+          "$NDK_BUILD" NDK_PROJECT_PATH="$PWD" APP_BUILD_SCRIPT="$PWD/app/src/main/jni/Android.mk" NDK_APPLICATION_MK="$PWD/app/src/main/jni/Application.mk" -j4
+          ls -lh libs/arm64-v8a/
+          file libs/arm64-v8a/libgamemodifier.so
+
+      - name: Upload SO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgamemodifier-so
+          path: libs/arm64-v8a/libgamemodifier.so
+          if-no-files-found: error
+          retention-days: 90
+
+      # 编译成功后把 .so 发到 Releases 的 latest 里，手机上点开就能直接下载
+      - name: Publish SO to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp libs/arm64-v8a/libgamemodifier.so libgamemodifier.so
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest libgamemodifier.so --title "libgamemodifier" --notes "每次推送自动编译的最新 arm64-v8a 版 libgamemodifier.so。"
