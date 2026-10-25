@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.gamemod'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+    ndkVersion '27.0.12077973'
+
+    defaultConfig {
+        applicationId 'com.gamemod'
+        minSdk 24
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // C 代码走原来的 ndk-build 方式（Android.mk / Application.mk 在 src/main/jni/ 下）
+    externalNativeBuild {
+        ndkBuild {
+            path file('src/main/jni/Android.mk')
+        }
+    }
+}
