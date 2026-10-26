@@ -24,12 +24,12 @@
 #include <dirent.h>
 #include <errno.h>
 
-#define TARGET_PACKAGE "com.rekoo.pubgm"
+#define TARGET_PACKAGE "com.tencent.tmgp.pubgmhd"
 #define TARGET_MODULE  "libil2cpp.so"
 #define WRITE_VALUE    110
 
 static const uintptr_t OFFSETS[] = {
-    0x56CFF0, 0x30, 0x4B8, 0x360, 0x170, 0x39C
+    0xB3D7F0, 0x0, 0x3C8, 0x2F4
 };
 #define OFFSET_COUNT (sizeof(OFFSETS) / sizeof(OFFSETS[0]))
 

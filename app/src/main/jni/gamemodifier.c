@@ -19,11 +19,11 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-#define TARGET_PACKAGE "com.rekoo.pubgm"
+#define TARGET_PACKAGE "com.tencent.tmgp.pubgmhd"
 #define TARGET_MODULE  "libil2cpp.so"
 
 static const uintptr_t OFFSETS[] = {
-    0x56CFF0, 0x30, 0x4B8, 0x360, 0x170, 0x39C
+    0xB3D7F0, 0x0, 0x3C8, 0x2F4
 };
 #define OFFSET_COUNT (sizeof(OFFSETS) / sizeof(OFFSETS[0]))
 
