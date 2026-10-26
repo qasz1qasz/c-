@@ -49,11 +49,7 @@ static void OnSignal(int) { g_running = 0; }
 /* 动态开关被点动时由界面回调：开启 -> 启动/继续写入；关闭 -> 停 */
 static std::mutex g_featureMutex;
 static bool g_featureEnabled = false;
-static float g_dynamicValue = 110.0f;   /* 动态区当前数值（输入框确定后更新） */
-
-/* 静态区执行结果（只有主线程读写，仍用锁和动态那边保持一致写法） */
-static std::mutex g_staticMutex;
-static std::string g_staticResult;
+static float g_dynamicValue = 120.0f;   /* 动态当前数值（输入框确定后更新） */
 
 extern "C" void OnFeatureToggled(int enabled)
 {
@@ -98,20 +94,7 @@ extern "C" void OnDynamicConfirm(const char *text)
     g_lastResult = message;
 }
 
-/* 静态区「确定修改」：按静态地址（libUE4.so 基址 + 0x37C03B8）立即写一次 */
-extern "C" void OnStaticConfirm(const char *text)
-{
-    float value;
-    if (!ParseFloatValue(text, &value)) {
-        std::lock_guard<std::mutex> lock(g_staticMutex);
-        g_staticResult = "失败：静态数值无效，点输入框用键盘输入数字";
-        return;
-    }
-    char message[128];
-    Feature_ApplyStaticWrite(value, message, sizeof(message));
-    std::lock_guard<std::mutex> lock(g_staticMutex);
-    g_staticResult = message;
-}
+
 
 /* 窗体里点「退出程序」按钮或标题栏 X：停主循环，后面统一走清理退出 */
 extern "C" void OnExitRequested()
@@ -119,8 +102,8 @@ extern "C" void OnExitRequested()
     g_running = 0;
 }
 
-/* 后台线程：动态开关开启期间每秒按当前动态数值执行一次写入，
- * 把结果存下来给界面显示（静态修改不在这里，点按钮才写） */
+/* 后台线程：开关开启期间每秒按当前数值执行一次写入，
+ * 把结果存下来给界面显示 */
 static void FeatureWorker()
 {
     while (g_running) {
@@ -147,7 +130,7 @@ int main()
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
 
-    printf("GameModifier ImGui 悬浮窗（arm64）\n");
+    printf("和平精英 ImGui 悬浮窗（arm64）\n");
     if (geteuid() != 0) {
         printf("警告：当前不是 root。创建悬浮层、读触摸、写游戏内存都需要 root，\n");
         printf("请先 su 再运行，否则大概率失败。\n");
@@ -239,7 +222,7 @@ int main()
     printf("屏幕：%d x %d，方向 %u\n", display.width, display.height, display.orientation);
 
     ANativeWindow *window = android::ANativeWindowCreator::Create(
-            "GameModifier", display.width, display.width);
+            "和平精英", display.width, display.width);
     if (window == nullptr) {
         printf("失败：悬浮层创建失败。\n");
         return 1;
@@ -269,9 +252,8 @@ int main()
         printf("警告：音量键监听没起来，窗体只能一直显示（原因见上面一行）。\n");
     }
 
-    /* 输入框默认值：动态 110（原 Lua 的值）、静态 2（静态广角的值） */
-    std::snprintf(g_menu.dynamic_input, sizeof(g_menu.dynamic_input), "110");
-    std::snprintf(g_menu.static_input, sizeof(g_menu.static_input), "2");
+    /* 输入框默认值：120（新 Lua 脚本里的 value） */
+    std::snprintf(g_menu.dynamic_input, sizeof(g_menu.dynamic_input), "120");
 
     std::thread worker(FeatureWorker);
 
@@ -296,12 +278,6 @@ int main()
                 std::lock_guard<std::mutex> lock(g_statusMutex);
                 std::snprintf(g_menu.status_text, sizeof(g_menu.status_text),
                               "%s", g_lastResult.c_str());
-            }
-            {
-                std::lock_guard<std::mutex> lock(g_staticMutex);
-                std::snprintf(g_menu.static_status_text,
-                              sizeof(g_menu.static_status_text),
-                              "%s", g_staticResult.c_str());
             }
             TouchInput::GetDebugText(g_menu.debug_text, sizeof(g_menu.debug_text));
             Menu_Draw(&g_menu);

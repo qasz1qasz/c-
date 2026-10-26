@@ -4,9 +4,9 @@
  * 样式要点：
  *   - 深色半透明窗体，圆角 8
  *   - 主色紫 #6C4DFF（开关打开色、标题栏激活色都用它）
- *   - 窗口分两个区域：上面「动态修改（指针链）」、下面「静态修改（静态广角）」
- *   - 每个区域各有一个输入框和一个「确定修改」按钮：用户在输入框里填数值，
- *     点确定才真正写入（动态区填的值同时是开关冻结重写用的值）
+ *   - 窗口只有一个功能区「动态修改（指针链）」：一个开关、一个输入框
+ *     和一个「确定修改」按钮：用户在输入框里填数值，
+ *     点确定才真正写入（填的值同时是开关冻结重写用的值）
  *   - 输入框点开的是窗内自带的数字键盘：本程序没有安卓窗口输入通道，
  *     系统输入法唤不起来，所以用自带键盘点按输入（数字、小数点、负号、删除）
  *   - 动态区的滑动开关是自绘的（ImGui 没有现成开关控件，
@@ -178,23 +178,15 @@ static void DrawValueInput(MenuState *state, const char *id, char *buf,
     }
 }
 
-/* 数字键盘：3 列网格，编辑 focused_input 指向的输入框 */
+/* 数字键盘：3 列网格，编辑动态输入框 */
 static void DrawNumericKeyboard(MenuState *state)
 {
-    char *buf = NULL;
-    size_t bufSize = 0;
-    if (state->focused_input == 1) {
-        buf = state->dynamic_input;
-        bufSize = sizeof(state->dynamic_input);
-    } else if (state->focused_input == 2) {
-        buf = state->static_input;
-        bufSize = sizeof(state->static_input);
-    } else {
-        return;
-    }
+    if (state->focused_input != 1) return;
+    char *buf = state->dynamic_input;
+    size_t bufSize = sizeof(state->dynamic_input);
 
     igSeparator();
-    igTextDisabled(state->focused_input == 1 ? "键盘：动态数值" : "键盘：静态数值");
+    igTextDisabled("键盘：动态数值");
 
     float avail = igGetContentRegionAvail().x;
     float keyW = (avail - 16.0f) / 3.0f; /* 3 列，两处行内间距共 16 */
@@ -255,10 +247,10 @@ void Menu_Draw(MenuState *state)
                            | ImGuiWindowFlags_AlwaysAutoResize;
     /* 传 &window_open 后标题栏会多一个 X，点它同样退出整个程序 */
     static bool window_open = true;
-    bool visible = igBegin("Game Modifier", &window_open, flags);
+    bool visible = igBegin("和平精英", &window_open, flags);
     if (visible) {
 
-        /* ===== 区域一：动态修改（指针链） ===== */
+        /* ===== 动态修改（指针链） ===== */
         igTextColored((ImVec4_c){ 0.62f, 0.62f, 0.68f, 1.00f }, "动态修改");
         igSeparator();
 
@@ -286,26 +278,7 @@ void Menu_Draw(MenuState *state)
             igTextWrapped("%s", state->status_text);
         }
 
-        igSpacing();
-
-        /* ===== 区域二：静态修改（静态广角） ===== */
-        igTextColored((ImVec4_c){ 0.62f, 0.62f, 0.68f, 1.00f }, "静态修改");
-        igSeparator();
-        igTextDisabled("libUE4.so 基址 + 0x37C03B8");
-
-        DrawValueInput(state, "##static_input", state->static_input,
-                       sizeof(state->static_input), 2);
-
-        if (igButton("确定修改##static", (ImVec2_c){ -1.0f, 0.0f })) {
-            OnStaticConfirm(state->static_input);
-        }
-
-        /* 主程序给的静态执行结果，有内容才显示 */
-        if (state->static_status_text[0] != '\0') {
-            igTextWrapped("%s", state->static_status_text);
-        }
-
-        /* ===== 数字键盘（点了哪个输入框就编辑哪个） ===== */
+        /* ===== 数字键盘（点输入框才出现） ===== */
         if (state->focused_input != 0) {
             igSpacing();
             DrawNumericKeyboard(state);
